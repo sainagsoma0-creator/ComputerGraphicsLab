@@ -1,0 +1,25 @@
+import matplotlib.pyplot as plt
+
+# Line
+x = [-2, 8]
+y = [2, 7]
+
+# Clipping window
+xmin, xmax = 0, 6
+ymin, ymax = 0, 5
+
+plt.plot(x, y, 'o-', label="Original Line")
+
+# Show clipping window
+plt.plot([xmin, xmax, xmax, xmin, xmin],
+         [ymin, ymin, ymax, ymax, ymin],
+         'k--', label="Clipping Window")
+
+plt.xlim(-3, 9)
+plt.ylim(-2, 8)
+plt.xlabel("X-axis")
+plt.ylabel("Y-axis")
+plt.title("Cohen-Sutherland Line Clipping")
+plt.grid()
+plt.legend()
+plt.show()
