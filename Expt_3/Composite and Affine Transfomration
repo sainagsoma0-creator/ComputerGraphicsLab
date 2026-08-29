@@ -1,0 +1,33 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Triangle
+P = np.array([[1, 3, 2, 1],
+              [1, 1, 3, 1],
+              [1, 1, 1, 1]])
+
+# Translation
+T = np.array([[1, 0, 2],
+              [0, 1, 1],
+              [0, 0, 1]])
+
+# Scaling
+S = np.array([[2, 0, 0],
+              [0, 2, 0],
+              [0, 0, 1]])
+
+# Composite transformations
+P_TS = T @ S @ P
+P_ST = S @ T @ P
+
+# Plot
+plt.plot(P[0], P[1], 'o-', label="Original")
+plt.plot(P_TS[0], P_TS[1], 'o-', label="Scale then Translate")
+plt.plot(P_ST[0], P_ST[1], 'o-', label="Translate then Scale")
+
+plt.xlabel("X-axis")
+plt.ylabel("Y-axis")
+plt.grid()
+plt.axis("equal")
+plt.legend()
+plt.show()
