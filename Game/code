@@ -1,0 +1,1273 @@
+import math
+import random
+import pygame
+
+# ============================================================
+# FRUIT SLICER - Computer Graphics Algorithms Demo
+# Uses:
+# 1. Scan-line polygon fill
+# 2. Flood fill
+# 3. DDA line
+# 4. Bresenham line
+# 5. Polygon clipping
+# 6. Sutherland-Hodgman clipping
+# 7. Liang-Barsky line clipping
+# 8. Midpoint circle
+# 9. Midpoint ellipse
+#
+# No external image assets are required.
+# ============================================================
+
+pygame.init()
+
+WIDTH, HEIGHT = 1100, 700
+FPS = 60
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("🍉 Fruit Slicer")
+clock = pygame.time.Clock()
+
+FONT = pygame.font.SysFont("arial", 22)
+SMALL = pygame.font.SysFont("arial", 16)
+BIG = pygame.font.SysFont("arial", 42, bold=True)
+TITLE_FONT = pygame.font.SysFont("arial", 38, bold=True)
+SCORE_FONT = pygame.font.SysFont("arial", 34, bold=True)
+COMBO_FONT = pygame.font.SysFont("arial", 30, bold=True)
+SMALL_BOLD = pygame.font.SysFont("arial", 18, bold=True)
+
+# ------------------------------------------------------------
+# Basic drawing helpers
+# ------------------------------------------------------------
+
+def put_pixel(surface, x, y, color):
+    if 0 <= x < WIDTH and 0 <= y < HEIGHT:
+        surface.set_at((int(x), int(y)), color)
+
+
+def dda_line(surface, p1, p2, color, width=2):
+    """DDA line algorithm."""
+    x1, y1 = p1
+    x2, y2 = p2
+    dx, dy = x2 - x1, y2 - y1
+    steps = max(abs(dx), abs(dy), 1)
+    x_inc = dx / steps
+    y_inc = dy / steps
+    x, y = x1, y1
+
+    for _ in range(int(steps) + 1):
+        pygame.draw.circle(surface, color, (round(x), round(y)), max(1, width // 2))
+        x += x_inc
+        y += y_inc
+
+
+def bresenham_line(surface, p1, p2, color, width=2):
+    """Bresenham line algorithm."""
+    x1, y1 = round(p1[0]), round(p1[1])
+    x2, y2 = round(p2[0]), round(p2[1])
+
+    dx = abs(x2 - x1)
+    dy = abs(y2 - y1)
+    sx = 1 if x1 < x2 else -1
+    sy = 1 if y1 < y2 else -1
+    err = dx - dy
+
+    radius = max(1, width // 2)
+
+    while True:
+        pygame.draw.circle(surface, color, (x1, y1), radius)
+        if x1 == x2 and y1 == y2:
+            break
+        e2 = 2 * err
+        if e2 > -dy:
+            err -= dy
+            x1 += sx
+        if e2 < dx:
+            err += dx
+            y1 += sy
+
+
+def midpoint_circle(surface, cx, cy, radius, color, width=1):
+    """Midpoint circle algorithm."""
+    cx, cy, radius = round(cx), round(cy), round(radius)
+    x = radius
+    y = 0
+    decision = 1 - radius
+
+    points = []
+
+    while x >= y:
+        points.extend([
+            (cx + x, cy + y), (cx + y, cy + x),
+            (cx - y, cy + x), (cx - x, cy + y),
+            (cx - x, cy - y), (cx - y, cy - x),
+            (cx + y, cy - x), (cx + x, cy - y)
+        ])
+        y += 1
+        if decision <= 0:
+            decision += 2 * y + 1
+        else:
+            x -= 1
+            decision += 2 * (y - x) + 1
+
+    for p in points:
+        if 0 <= p[0] < WIDTH and 0 <= p[1] < HEIGHT:
+            pygame.draw.circle(surface, color, p, max(1, width))
+
+
+def midpoint_ellipse(surface, cx, cy, rx, ry, color, width=1):
+    """Midpoint ellipse algorithm."""
+    cx, cy, rx, ry = round(cx), round(cy), round(rx), round(ry)
+    if rx <= 0 or ry <= 0:
+        return
+
+    x, y = 0, ry
+    rx2, ry2 = rx * rx, ry * ry
+    dx = 2 * ry2 * x
+    dy = 2 * rx2 * y
+
+    p1 = ry2 - rx2 * ry + 0.25 * rx2
+
+    points = []
+
+    while dx < dy:
+        points += [
+            (cx + x, cy + y), (cx - x, cy + y),
+            (cx - x, cy - y), (cx + x, cy - y)
+        ]
+        x += 1
+        dx += 2 * ry2
+
+        if p1 < 0:
+            p1 += dx + ry2
+        else:
+            y -= 1
+            dy -= 2 * rx2
+            p1 += dx - dy + ry2
+
+    p2 = ry2 * (x + 0.5) ** 2 + rx2 * (y - 1) ** 2 - rx2 * ry2
+
+    while y >= 0:
+        points += [
+            (cx + x, cy + y), (cx - x, cy + y),
+            (cx - x, cy - y), (cx + x, cy - y)
+        ]
+        y -= 1
+        dy -= 2 * rx2
+
+        if p2 > 0:
+            p2 += rx2 - dy
+        else:
+            x += 1
+            dx += 2 * ry2
+            p2 += dx - dy + rx2
+
+    for p in points:
+        if 0 <= p[0] < WIDTH and 0 <= p[1] < HEIGHT:
+            pygame.draw.circle(surface, color, p, max(1, width))
+
+
+def scanline_fill(surface, polygon, color):
+    """Scan-line polygon filling algorithm."""
+    if len(polygon) < 3:
+        return
+
+    ys = [p[1] for p in polygon]
+    ymin = max(0, math.floor(min(ys)))
+    ymax = min(HEIGHT - 1, math.ceil(max(ys)))
+
+    for y in range(ymin, ymax + 1):
+        intersections = []
+
+        for i in range(len(polygon)):
+            x1, y1 = polygon[i]
+            x2, y2 = polygon[(i + 1) % len(polygon)]
+
+            if y1 == y2:
+                continue
+
+            if (y >= min(y1, y2)) and (y < max(y1, y2)):
+                x = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
+                intersections.append(x)
+
+        intersections.sort()
+
+        for i in range(0, len(intersections) - 1, 2):
+            x_start = max(0, math.ceil(intersections[i]))
+            x_end = min(WIDTH - 1, math.floor(intersections[i + 1]))
+            if x_end >= x_start:
+                pygame.draw.line(surface, color, (x_start, y), (x_end, y))
+
+
+def flood_fill(surface, start, fill_color, target_color=None):
+    """Stack-based flood fill algorithm."""
+    x0, y0 = int(start[0]), int(start[1])
+    if not (0 <= x0 < WIDTH and 0 <= y0 < HEIGHT):
+        return
+
+    if target_color is None:
+        target_color = surface.get_at((x0, y0))[:3]
+
+    if target_color == fill_color:
+        return
+
+    # Avoid accidentally flooding the entire screen.
+    stack = [(x0, y0)]
+    visited = set()
+
+    while stack and len(visited) < 50000:
+        x, y = stack.pop()
+
+        if (x, y) in visited or not (0 <= x < WIDTH and 0 <= y < HEIGHT):
+            continue
+
+        current = surface.get_at((x, y))[:3]
+        if current != target_color:
+            continue
+
+        visited.add((x, y))
+        surface.set_at((x, y), fill_color)
+
+        stack.extend([(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)])
+
+
+# ------------------------------------------------------------
+# Polygon clipping
+# ------------------------------------------------------------
+
+def inside_edge(point, edge, rect):
+    x, y = point
+    left, top, right, bottom = rect
+
+    if edge == "left":
+        return x >= left
+    if edge == "right":
+        return x <= right
+    if edge == "top":
+        return y >= top
+    return y <= bottom
+
+
+def intersect_edge(a, b, edge, rect):
+    x1, y1 = a
+    x2, y2 = b
+    left, top, right, bottom = rect
+
+    if edge in ("left", "right"):
+        x_edge = left if edge == "left" else right
+        if x2 == x1:
+            return (x_edge, y1)
+        t = (x_edge - x1) / (x2 - x1)
+        return (x_edge, y1 + t * (y2 - y1))
+    else:
+        y_edge = top if edge == "top" else bottom
+        if y2 == y1:
+            return (x1, y_edge)
+        t = (y_edge - y1) / (y2 - y1)
+        return (x1 + t * (x2 - x1), y_edge)
+
+
+def sutherland_hodgman_clip(polygon, rect):
+    """Sutherland-Hodgman polygon clipping."""
+    output = polygon[:]
+
+    for edge in ("left", "right", "top", "bottom"):
+        if not output:
+            break
+
+        input_list = output
+        output = []
+
+        previous = input_list[-1]
+        prev_inside = inside_edge(previous, edge, rect)
+
+        for current in input_list:
+            cur_inside = inside_edge(current, edge, rect)
+
+            if cur_inside:
+                if not prev_inside:
+                    output.append(intersect_edge(previous, current, edge, rect))
+                output.append(current)
+            elif prev_inside:
+                output.append(intersect_edge(previous, current, edge, rect))
+
+            previous = current
+            prev_inside = cur_inside
+
+    return output
+
+
+def polygon_clip(polygon, rect):
+    """Generic polygon clipping wrapper."""
+    return sutherland_hodgman_clip(polygon, rect)
+
+
+def liang_barsky_clip(p1, p2, rect):
+    """Liang-Barsky line clipping algorithm.
+
+    Returns the clipped line or None if it is outside.
+    """
+    x1, y1 = p1
+    x2, y2 = p2
+    xmin, ymin, xmax, ymax = rect
+
+    dx = x2 - x1
+    dy = y2 - y1
+
+    p = [-dx, dx, -dy, dy]
+    q = [x1 - xmin, xmax - x1, y1 - ymin, ymax - y1]
+
+    u1, u2 = 0.0, 1.0
+
+    for pi, qi in zip(p, q):
+        if pi == 0:
+            if qi < 0:
+                return None
+        else:
+            t = qi / pi
+            if pi < 0:
+                if t > u2:
+                    return None
+                u1 = max(u1, t)
+            else:
+                if t < u1:
+                    return None
+                u2 = min(u2, t)
+
+    return (
+        (x1 + u1 * dx, y1 + u1 * dy),
+        (x1 + u2 * dx, y1 + u2 * dy)
+    )
+
+
+# ------------------------------------------------------------
+# Geometry helpers
+# ------------------------------------------------------------
+
+def point_in_polygon(point, polygon):
+    x, y = point
+    inside = False
+
+    j = len(polygon) - 1
+    for i in range(len(polygon)):
+        xi, yi = polygon[i]
+        xj, yj = polygon[j]
+
+        intersects = ((yi > y) != (yj > y)) and (
+            x < (xj - xi) * (y - yi) / ((yj - yi) or 1e-9) + xi
+        )
+
+        if intersects:
+            inside = not inside
+
+        j = i
+
+    return inside
+
+
+def segment_intersection(a, b, c, d):
+    """Return intersection point of two line segments, if any."""
+    ax, ay = a
+    bx, by = b
+    cx, cy = c
+    dx, dy = d
+
+    r_x, r_y = bx - ax, by - ay
+    s_x, s_y = dx - cx, dy - cy
+
+    denom = r_x * s_y - r_y * s_x
+    if abs(denom) < 1e-9:
+        return None
+
+    qpx, qpy = cx - ax, cy - ay
+    t = (qpx * s_y - qpy * s_x) / denom
+    u = (qpx * r_y - qpy * r_x) / denom
+
+    if 0 <= t <= 1 and 0 <= u <= 1:
+        return (ax + t * r_x, ay + t * r_y)
+
+    return None
+
+
+def line_polygon_intersections(a, b, polygon):
+    hits = []
+
+    for i in range(len(polygon)):
+        c = polygon[i]
+        d = polygon[(i + 1) % len(polygon)]
+        hit = segment_intersection(a, b, c, d)
+        if hit is not None:
+            if not any(math.dist(hit, h) < 3 for h in hits):
+                hits.append(hit)
+
+    return hits
+
+
+def polygon_centroid(poly):
+    if not poly:
+        return (0, 0)
+    x = sum(p[0] for p in poly) / len(poly)
+    y = sum(p[1] for p in poly) / len(poly)
+    return x, y
+
+
+# ------------------------------------------------------------
+# Fruit shapes
+# ------------------------------------------------------------
+
+FRUIT_TYPES = ["apple", "orange", "lemon", "peach", "kiwi", "banana", "strawberry", "pineapple", "mango"]
+
+
+def make_fruit_polygon(kind, cx, cy, scale):
+    pts = []
+
+    if kind == "watermelon":
+        # Wedge-shaped slice
+        for i in range(11):
+            ang = math.pi * i / 10
+            pts.append((
+                cx + math.cos(ang) * 65 * scale,
+                cy - math.sin(ang) * 55 * scale
+            ))
+        for i in range(10, -1, -1):
+            ang = math.pi * i / 10
+            pts.append((
+                cx + math.cos(ang) * 54 * scale,
+                cy - math.sin(ang) * 44 * scale
+            ))
+    elif kind == "banana":
+        # Curved banana silhouette.
+        for i in range(17):
+            t = i / 16
+            x = -58 + 116 * t
+            y = -22 * math.sin(math.pi * t) - 10 * (t - 0.5)
+            pts.append((cx + x * scale, cy + y * scale - 14 * scale))
+        for i in range(16, -1, -1):
+            t = i / 16
+            x = -52 + 104 * t
+            y = -2 * math.sin(math.pi * t) + 12 * (t - 0.5)
+            pts.append((cx + x * scale, cy + y * scale + 14 * scale))
+    elif kind == "strawberry":
+        # Heart/cone shaped strawberry.
+        for i in range(21):
+            a = math.pi * 2 * i / 20
+            x = 43 * math.cos(a) * (0.92 + 0.08 * math.cos(a))
+            y = 48 * math.sin(a)
+            if y < 0:
+                y *= 0.82
+            pts.append((cx + x * scale, cy + y * scale))
+        # Narrow the bottom into the strawberry point.
+        pts[-1] = (cx, cy + 57 * scale)
+    elif kind == "pineapple":
+        # Oval pineapple body.
+        n = 18
+        for i in range(n):
+            a = 2 * math.pi * i / n
+            r = 47 * scale * (1 + 0.06 * math.sin(3*a))
+            pts.append((cx + r * math.cos(a), cy + r * math.sin(a) * 1.18))
+    elif kind == "mango":
+        # Asymmetric mango silhouette.
+        n = 18
+        for i in range(n):
+            a = 2 * math.pi * i / n
+            r = 49 * scale * (1 + 0.16 * math.cos(a - 0.55))
+            pts.append((cx + r * math.cos(a), cy + r * math.sin(a) * 1.05))
+    else:
+        n = 16
+        for i in range(n):
+            a = 2 * math.pi * i / n
+
+            if kind == "apple":
+                r = 53 * scale * (1 + 0.10 * math.sin(2 * a) - 0.06 * math.cos(3 * a))
+                x = cx + r * math.cos(a)
+                y = cy + r * math.sin(a)
+                if y < cy:
+                    y -= 4 * scale * math.cos(a)
+            elif kind == "orange":
+                r = 48 * scale * (1 + 0.025 * math.sin(7 * a))
+                x = cx + r * math.cos(a)
+                y = cy + r * math.sin(a)
+            elif kind == "lemon":
+                x = cx + 68 * scale * math.cos(a)
+                y = cy + 43 * scale * math.sin(a)
+            elif kind == "peach":
+                r = 51 * scale * (1 + 0.08 * math.cos(a))
+                x = cx + r * math.cos(a)
+                y = cy + r * math.sin(a)
+            else:  # kiwi
+                x = cx + 49 * scale * math.cos(a)
+                y = cy + 49 * scale * math.sin(a)
+
+            pts.append((x, y))
+
+    return pts
+
+
+def fruit_colors(kind):
+    return {
+        "apple": ((190, 35, 45), (235, 75, 80), (110, 20, 25)),
+        "orange": ((235, 125, 20), (255, 175, 55), (150, 70, 10)),
+        "watermelon": ((30, 160, 75), (255, 85, 100), (20, 80, 40)),
+        "lemon": ((245, 205, 35), (255, 235, 100), (180, 135, 10)),
+        "peach": ((240, 125, 90), (255, 175, 140), (170, 70, 60)),
+        "kiwi": ((100, 155, 45), (155, 195, 85), (55, 90, 30)),
+        "banana": ((235, 195, 35), (255, 235, 105), (145, 105, 15)),
+        "strawberry": ((205, 35, 48), (255, 105, 105), (125, 20, 28)),
+        "pineapple": ((205, 155, 35), (245, 205, 80), (115, 80, 15)),
+        "mango": ((225, 125, 25), (255, 190, 70), (150, 65, 12)),
+    }[kind]
+
+
+def draw_fruit(surface, fruit, polygon=None, offset=(0, 0), clipped_rect=None):
+    """Layered procedural fruit renderer using the project's CG algorithms."""
+    kind = fruit.kind
+    if polygon is None:
+        polygon = fruit.polygon
+    ox, oy = offset
+    poly = [(x + ox, y + oy) for x, y in polygon]
+    if clipped_rect:
+        poly = polygon_clip(poly, clipped_rect)
+    if len(poly) < 3:
+        return
+
+    outer, highlight, dark = fruit_colors(kind)
+    cx, cy = polygon_centroid(poly)
+
+    # Main body: scan-line fill.
+    scanline_fill(surface, poly, outer)
+
+    # Layered shading clipped to the fruit polygon.
+    for factor, color in (
+        (0.92, tuple(min(255, int(c * 1.06)) for c in outer)),
+        (0.82, tuple(max(0, int(c * 0.86)) for c in outer)),
+    ):
+        inner = [(cx + (x-cx)*factor, cy + (y-cy)*factor) for x, y in poly]
+        scanline_fill(surface, inner, color)
+
+    # Broad center layer.
+    inner = [(cx + (x-cx)*0.88, cy + (y-cy)*0.86) for x, y in poly]
+    scanline_fill(surface, inner, outer)
+
+    # Crisp outline: Bresenham.
+    for i in range(len(poly)):
+        bresenham_line(surface, poly[i], poly[(i+1) % len(poly)], dark, 3)
+
+    if kind == "watermelon":
+        flesh = [(cx+(x-cx)*0.82, cy+(y-cy)*0.80) for x,y in poly]
+        scanline_fill(surface, flesh, (239,70,82))
+        rind = [(cx+(x-cx)*0.92, cy+(y-cy)*0.90) for x,y in poly]
+        pygame.draw.polygon(surface, (104,190,72), rind, 5)
+        midpoint_ellipse(surface,cx-20,cy-17,17*fruit.scale,8*fruit.scale,
+                          (255,135,145),3)
+        random.seed(int(cx*31+cy*17))
+        for _ in range(9):
+            a=random.uniform(0,math.pi)
+            rr=random.uniform(10,32)*fruit.scale
+            sx=cx+math.cos(a)*rr; sy=cy-math.sin(a)*rr
+            pygame.draw.ellipse(surface,(38,30,27),(round(sx)-3,round(sy)-6,6,12))
+        return
+
+    if kind == "apple":
+        shadow=[(cx+(x-cx)*0.73+8,cy+(y-cy)*0.73+9) for x,y in poly]
+        scanline_fill(surface,shadow,(168,27,36))
+        glow=[(cx+(x-cx)*0.66-9,cy+(y-cy)*0.67-10) for x,y in poly]
+        scanline_fill(surface,glow,(220,50,58))
+        random.seed(int(cx*13+cy*29))
+        for _ in range(30):
+            a=random.random()*math.pi*2; rr=math.sqrt(random.random())*36*fruit.scale
+            sx=cx+math.cos(a)*rr; sy=cy+math.sin(a)*rr
+            pygame.draw.circle(surface,(142,32,38),(round(sx),round(sy)),1)
+        bresenham_line(surface,(cx,cy-39),(cx+8,cy-61),(75,42,20),5)
+        leaf=[(cx+5,cy-54),(cx+31,cy-66),(cx+20,cy-45),(cx+5,cy-49)]
+        scanline_fill(surface,leaf,(52,142,56))
+        for i in range(4):
+            bresenham_line(surface,leaf[i],leaf[(i+1)%4],(28,88,35),2)
+        midpoint_ellipse(surface,cx-18,cy-18,14*fruit.scale,22*fruit.scale,
+                          (255,175,178),4)
+        midpoint_circle(surface,cx-27,cy-29,3,(255,225,225),2)
+        return
+
+    if kind == "orange":
+        midpoint_circle(surface,cx,cy,47*fruit.scale,(180,72,7),3)
+        random.seed(int(cx*19+cy*7))
+        for _ in range(90):
+            a=random.random()*math.pi*2; rr=math.sqrt(random.random())*40*fruit.scale
+            sx=cx+math.cos(a)*rr; sy=cy+math.sin(a)*rr
+            pygame.draw.circle(surface,random.choice([(205,91,7),(244,140,25),(255,166,42)]),
+                               (round(sx),round(sy)),1)
+        midpoint_circle(surface,cx,cy-43*fruit.scale,5,(155,63,6),2)
+        midpoint_ellipse(surface,cx-17,cy-18,14*fruit.scale,9*fruit.scale,
+                          (255,207,103),4)
+        return
+
+    if kind == "lemon":
+        midpoint_ellipse(surface,cx,cy,59*fruit.scale,37*fruit.scale,(185,135,7),3)
+        random.seed(int(cx*17+cy*23))
+        for _ in range(55):
+            a=random.random()*math.pi*2
+            rx=random.uniform(0,49)*fruit.scale; ry=random.uniform(0,29)*fruit.scale
+            sx=cx+math.cos(a)*rx; sy=cy+math.sin(a)*ry
+            pygame.draw.circle(surface,(239,190,32),(round(sx),round(sy)),1)
+        pygame.draw.polygon(surface,(218,170,19),[
+            (cx-57*fruit.scale,cy),(cx-68*fruit.scale,cy-5*fruit.scale),
+            (cx-58*fruit.scale,cy+5*fruit.scale)])
+        pygame.draw.polygon(surface,(218,170,19),[
+            (cx+57*fruit.scale,cy),(cx+68*fruit.scale,cy-5*fruit.scale),
+            (cx+58*fruit.scale,cy+5*fruit.scale)])
+        midpoint_ellipse(surface,cx-19,cy-17,17*fruit.scale,8*fruit.scale,
+                          (255,242,135),4)
+        return
+
+    if kind == "peach":
+        inner=[(cx+(x-cx)*0.80,cy+(y-cy)*0.80) for x,y in poly]
+        scanline_fill(surface,inner,(245,140,105))
+        random.seed(int(cx*11+cy*23))
+        for _ in range(75):
+            a=random.random()*math.pi*2; rr=math.sqrt(random.random())*41*fruit.scale
+            sx=cx+math.cos(a)*rr; sy=cy+math.sin(a)*rr
+            pygame.draw.circle(surface,random.choice([(221,108,87),(255,165,130),(235,126,99)]),
+                               (round(sx),round(sy)),1)
+        dda_line(surface,(cx+2,cy-43*fruit.scale),(cx-4,cy+43*fruit.scale),
+                 (170,68,60),3)
+        midpoint_ellipse(surface,cx-17,cy-19,15*fruit.scale,10*fruit.scale,
+                          (255,195,169),4)
+        return
+
+    if kind == "kiwi":
+        midpoint_circle(surface,cx,cy,50*fruit.scale,(76,54,29),6)
+        midpoint_circle(surface,cx,cy,41*fruit.scale,(151,190,75),2)
+        midpoint_circle(surface,cx,cy,8*fruit.scale,(229,224,150),2)
+        for i in range(18):
+            a=i*math.pi*2/18
+            dda_line(surface,(cx,cy),
+                     (cx+math.cos(a)*35*fruit.scale,cy+math.sin(a)*35*fruit.scale),
+                     (181,211,104),1)
+        for i in range(20):
+            a=i*math.pi*2/20; rr=27*fruit.scale
+            midpoint_ellipse(surface,cx+math.cos(a)*rr,cy+math.sin(a)*rr,
+                             2.2,4.2,(45,34,23),2)
+        midpoint_ellipse(surface,cx-16,cy-18,12*fruit.scale,7*fruit.scale,
+                          (211,235,145),3)
+        return
+
+    midpoint_ellipse(surface,cx-17,cy-19,13*fruit.scale,8*fruit.scale,highlight,4)
+
+
+# ------------------------------------------------------------
+# Fruit object
+# ------------------------------------------------------------
+
+class Fruit:
+    def __init__(self):
+        self.kind = random.choice(FRUIT_TYPES)
+        self.scale = random.uniform(0.85, 1.15)
+
+        self.x = random.randint(100, WIDTH - 100)
+        self.y = HEIGHT + random.randint(20, 120)
+
+        self.vx = random.uniform(-2.8, 2.8)
+        self.vy = random.uniform(-13.5, -10.0)
+        self.gravity = 0.30
+
+        self.rotation = 0
+        self.alive = True
+        self.sliced = False
+        self.slice_timer = 0
+        self.piece_data = []
+
+        self.polygon = make_fruit_polygon(
+            self.kind, self.x, self.y, self.scale
+        )
+
+        self.radius = 65 * self.scale
+
+    def update(self):
+        if self.sliced:
+            for piece in self.piece_data:
+                piece["x"] += piece["vx"]
+                piece["y"] += piece["vy"]
+                piece["vy"] += 0.22
+                piece["angle"] += piece["spin"]
+            self.slice_timer -= 1
+            if self.slice_timer <= 0:
+                self.alive = False
+            return
+
+        self.vy += self.gravity
+        self.x += self.vx
+        self.y += self.vy
+        self.rotation += self.vx * 0.5
+
+        self.polygon = make_fruit_polygon(
+            self.kind, self.x, self.y, self.scale
+        )
+
+        if self.y > HEIGHT + 130:
+            self.alive = False
+
+    def draw(self, surface):
+        if not self.sliced:
+            draw_fruit(surface, self)
+            return
+
+        # Draw the two clipped halves.
+        for piece in self.piece_data:
+            poly = piece["poly"]
+            ox, oy = piece["x"] - self.x, piece["y"] - self.y
+
+            draw_fruit(surface, self, polygon=poly, offset=(ox, oy))
+
+    def try_slice(self, a, b):
+        if self.sliced:
+            return False
+
+        # Quick circular test.
+        cx, cy = self.x, self.y
+        vx, vy = b[0] - a[0], b[1] - a[1]
+
+        if vx == 0 and vy == 0:
+            return False
+
+        t = ((cx - a[0]) * vx + (cy - a[1]) * vy) / (vx * vx + vy * vy)
+        t = max(0, min(1, t))
+        closest = (a[0] + t * vx, a[1] + t * vy)
+
+        if math.dist((cx, cy), closest) > self.radius:
+            return False
+
+        # Actual intersection against the fruit polygon.
+        hits = line_polygon_intersections(a, b, self.polygon)
+
+        if len(hits) < 2:
+            # If the stroke crosses the visual body but polygon
+            # approximation misses, use a robust center test.
+            if not point_in_polygon(closest, self.polygon):
+                return False
+
+        # Split polygon into two sides of the slicing line.
+        line_dx = b[0] - a[0]
+        line_dy = b[1] - a[1]
+
+        side_a = []
+        side_b = []
+
+        for i in range(len(self.polygon)):
+            p = self.polygon[i]
+            q = self.polygon[(i + 1) % len(self.polygon)]
+
+            cross_p = line_dx * (p[1] - a[1]) - line_dy * (p[0] - a[0])
+            cross_q = line_dx * (q[1] - a[1]) - line_dy * (q[0] - a[0])
+
+            if cross_p >= 0:
+                side_a.append(p)
+            else:
+                side_b.append(p)
+
+            if (cross_p > 0 and cross_q < 0) or (cross_p < 0 and cross_q > 0):
+                hit = segment_intersection(p, q, a, b)
+                if hit:
+                    side_a.append(hit)
+                    side_b.append(hit)
+
+        if len(side_a) < 3 or len(side_b) < 3:
+            return False
+
+        # Polygon clipping is used again to keep each generated half
+        # inside the screen before rendering.
+        clip_rect = (0, 0, WIDTH - 1, HEIGHT - 1)
+        side_a = polygon_clip(side_a, clip_rect)
+        side_b = polygon_clip(side_b, clip_rect)
+
+        if len(side_a) < 3 or len(side_b) < 3:
+            return False
+
+        ca = polygon_centroid(side_a)
+        cb = polygon_centroid(side_b)
+
+        direction = pygame.Vector2(line_dx, line_dy)
+        if direction.length() > 0:
+            direction = direction.normalize()
+
+        # Animate the pieces away from the cut.
+        self.piece_data = [
+            {
+                "poly": side_a,
+                "x": self.x,
+                "y": self.y,
+                "vx": -direction.x * 2.5 + self.vx * 0.25,
+                "vy": -direction.y * 2.0 + self.vy * 0.20,
+                "angle": 0,
+                "spin": -0.045,
+            },
+            {
+                "poly": side_b,
+                "x": self.x,
+                "y": self.y,
+                "vx": direction.x * 2.5 + self.vx * 0.25,
+                "vy": direction.y * 2.0 + self.vy * 0.20,
+                "angle": 0,
+                "spin": 0.045,
+            }
+        ]
+
+        self.sliced = True
+        self.slice_timer = 34
+        return True
+
+
+# ------------------------------------------------------------
+# Bomb object
+# ------------------------------------------------------------
+
+class Bomb:
+    """Clearly visible animated bomb with line/circle collision."""
+
+    def __init__(self):
+        self.x = random.randint(80, WIDTH - 80)
+        self.y = HEIGHT + random.randint(20, 100)
+        self.vx = random.uniform(-2.5, 2.5)
+        self.vy = random.uniform(-13.0, -10.5)
+        self.gravity = 0.30
+        self.radius = random.randint(38, 46)
+        self.alive = True
+        self.fuse_time = 0.0
+
+    def update(self):
+        self.vy += self.gravity
+        self.x += self.vx
+        self.y += self.vy
+        self.fuse_time += 0.22
+
+        if self.y > HEIGHT + 100:
+            self.alive = False
+
+    def draw(self, surface):
+        cx, cy = round(self.x), round(self.y)
+        r = self.radius
+
+        # Large black bomb body.
+        pygame.draw.circle(surface, (12, 12, 15), (cx, cy), r)
+        pygame.draw.circle(surface, (45, 45, 50), (cx - 4, cy - 5), r - 6)
+
+        # Glossy highlight.
+        pygame.draw.ellipse(
+            surface, (105, 105, 112),
+            (cx - r*0.55, cy - r*0.58, r*0.30, r*0.22)
+        )
+
+        # Strong outer border using midpoint circle.
+        midpoint_circle(surface, cx, cy, r, (5, 5, 7), 4)
+
+        # Fuse socket.
+        pygame.draw.rect(
+            surface, (90, 65, 35),
+            (cx - 9, cy - r - 9, 18, 13),
+            border_radius=3
+        )
+
+        # Fuse using DDA segments.
+        fuse = [
+            (cx, cy-r-5),
+            (cx+5, cy-r-19),
+            (cx+16, cy-r-25),
+            (cx+22, cy-r-16)
+        ]
+        for a, b in zip(fuse, fuse[1:]):
+            dda_line(surface, a, b, (155, 105, 55), 4)
+
+        # Animated orange/yellow spark.
+        sx, sy = fuse[-1]
+        pulse = 5 + int(3 * abs(math.sin(self.fuse_time)))
+        midpoint_circle(surface, sx, sy, pulse, (255, 150, 25), 3)
+        pygame.draw.circle(surface, (255, 240, 120), (sx, sy), max(2, pulse//2))
+
+        # Small warning band makes it unmistakable as a bomb.
+        bresenham_line(
+            surface, (cx-r//2, cy+r//2),
+            (cx+r//2, cy+r//2), (85, 85, 90), 3
+        )
+
+    def hit_by_segment(self, a, b):
+        dx = b[0] - a[0]
+        dy = b[1] - a[1]
+
+        if dx == 0 and dy == 0:
+            return False
+
+        t = ((self.x-a[0])*dx + (self.y-a[1])*dy) / (dx*dx + dy*dy)
+        t = max(0.0, min(1.0, t))
+        closest = (a[0] + t*dx, a[1] + t*dy)
+
+        return math.dist((self.x, self.y), closest) <= self.radius + 8
+
+# ------------------------------------------------------------
+# Game state
+# ------------------------------------------------------------
+
+fruits = []
+bombs = []
+score = 0
+best_score = 0
+lives = 3
+spawn_timer = 0
+game_over = False
+
+# Combo meter: consecutive fruit slices build the multiplier.
+combo = 0
+combo_timer = 0
+COMBO_WINDOW = 75  # frames before the combo resets
+MAX_COMBO = 20
+
+
+# Mouse slicing trail.
+blade_points = []
+blade_timer = 0
+MAX_BLADE_POINTS = 24
+
+# Particles.
+particles = []
+
+
+def spawn_fruit():
+    fruits.append(Fruit())
+
+
+
+def register_fruit_slice(pos):
+    """Increase combo and award a multiplier-based score."""
+    global combo, combo_timer, score
+
+    combo = min(MAX_COMBO, combo + 1)
+    combo_timer = COMBO_WINDOW
+
+    # Every slice is worth more while the combo is active.
+    multiplier = 1 + combo // 3
+    score += 10 * multiplier
+    global best_score
+    best_score = max(best_score, score)
+    add_slice_particles(pos)
+
+
+def spawn_bomb():
+    bombs.append(Bomb())
+
+
+def add_slice_particles(pos):
+    for _ in range(18):
+        angle = random.uniform(0, math.pi * 2)
+        speed = random.uniform(1.5, 5.0)
+        particles.append({
+            "x": pos[0],
+            "y": pos[1],
+            "vx": math.cos(angle) * speed,
+            "vy": math.sin(angle) * speed,
+            "life": random.randint(15, 28),
+            "size": random.randint(2, 5),
+        })
+
+
+def update_particles():
+    for p in particles[:]:
+        p["x"] += p["vx"]
+        p["y"] += p["vy"]
+        p["vy"] += 0.10
+        p["life"] -= 1
+
+        if p["life"] <= 0:
+            particles.remove(p)
+
+
+def draw_particles(surface):
+    for p in particles:
+        pygame.draw.circle(
+            surface, (255, 230, 130),
+            (round(p["x"]), round(p["y"])),
+            p["size"]
+        )
+
+
+def reset_game():
+    global fruits, bombs, score, lives, spawn_timer, game_over
+    fruits = []
+    bombs = []
+    score = 0
+    lives = 3
+    spawn_timer = 0
+    game_over = False
+
+
+def draw_background(surface):
+    """Warm wooden arcade background inspired by the generated mockup."""
+    surface.fill((67, 31, 16))
+
+    # Wooden planks.
+    plank_h = 88
+    for y in range(0, HEIGHT, plank_h):
+        base = 76 + ((y // plank_h) % 2) * 8
+        pygame.draw.rect(surface, (base, 39, 20), (0, y, WIDTH, plank_h))
+
+        # Plank grain.
+        random.seed(9000 + y)
+        for _ in range(12):
+            x = random.randint(0, WIDTH)
+            length = random.randint(40, 180)
+            yy = y + random.randint(12, plank_h - 12)
+            dda_line(surface, (x, yy), (min(WIDTH, x + length), yy),
+                     (base + 10, 48, 24), 2)
+
+    # Vertical plank seams.
+    for x in range(0, WIDTH, 185):
+        pygame.draw.rect(surface, (43, 22, 13), (x, 0, 5, HEIGHT))
+        pygame.draw.rect(surface, (104, 53, 27), (x + 5, 0, 2, HEIGHT))
+
+    # A few dark scratches.
+    random.seed(12345)
+    for _ in range(22):
+        x = random.randint(0, WIDTH)
+        y = random.randint(90, HEIGHT - 10)
+        length = random.randint(20, 75)
+        bresenham_line(surface, (x, y), (x + length, y - random.randint(4, 18)),
+                        (52, 25, 14), 2)
+
+    # Subtle top vignette.
+    overlay = pygame.Surface((WIDTH, 95), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 70))
+    surface.blit(overlay, (0, 0))
+
+
+def draw_hud(surface):
+    # Left score panel.
+    score_label = SMALL_BOLD.render("SCORE", True, (255, 225, 70))
+    score_value = SCORE_FONT.render(str(score), True, (255, 245, 125))
+    best_value = SMALL_BOLD.render(f"BEST: {max(best_score, score)}", True, (255, 225, 70))
+
+    surface.blit(score_label, (30, 20))
+    surface.blit(score_value, (28, 40))
+    surface.blit(best_value, (30, 82))
+
+    # Center combo.
+    multiplier = 1 + combo // 3 if combo > 0 else 1
+    combo_title = COMBO_FONT.render(
+        f"COMBO   x{multiplier}", True, (255, 224, 70)
+    )
+    surface.blit(combo_title,
+                 (WIDTH//2 - combo_title.get_width()//2, 18))
+
+    bar_w, bar_h = 350, 18
+    bar_x = WIDTH//2 - bar_w//2
+    bar_y = 55
+    pygame.draw.rect(surface, (35, 20, 12),
+                     (bar_x-4, bar_y-4, bar_w+8, bar_h+8),
+                     border_radius=10)
+    pygame.draw.rect(surface, (90, 55, 20),
+                     (bar_x, bar_y, bar_w, bar_h),
+                     border_radius=9)
+
+    fill_ratio = combo_timer / COMBO_WINDOW if combo > 0 else 0
+    fill_w = int(bar_w * fill_ratio)
+    if fill_w:
+        pygame.draw.rect(surface, (255, 181, 25),
+                         (bar_x, bar_y, fill_w, bar_h),
+                         border_radius=9)
+
+    if combo > 0:
+        streak = SMALL_BOLD.render(
+            f"FRUIT STREAK: {combo}", True, (180, 255, 60)
+        )
+        surface.blit(streak, (WIDTH//2 - streak.get_width()//2, 80))
+
+    # Right-side lives.
+    lives_label = SMALL_BOLD.render("LIVES", True, (255, 230, 230))
+    surface.blit(lives_label, (WIDTH - 160, 18))
+
+    for i in range(3):
+        x = WIDTH - 145 + i * 40
+        if i < lives:
+            pygame.draw.circle(surface, (220, 35, 45), (x, 57), 15)
+            pygame.draw.circle(surface, (255, 90, 95), (x-4, 52), 6)
+        else:
+            pygame.draw.circle(surface, (70, 35, 35), (x, 57), 15)
+
+    # Bomb warning.
+    warning = SMALL_BOLD.render("BOMBS ARE DEADLY!", True, (255, 85, 45))
+    surface.blit(warning, (WIDTH - warning.get_width() - 22, 88))
+
+    # Bottom instruction.
+    hint = SMALL_BOLD.render(
+        "SLICE WITH YOUR MOUSE  •  AVOID BOMBS",
+        True, (245, 235, 220)
+    )
+    surface.blit(hint, (WIDTH//2 - hint.get_width()//2, HEIGHT - 32))
+
+
+def draw_blade(surface):
+    if len(blade_points) < 2:
+        return
+
+    # Liang-Barsky clips every blade segment to the screen.
+    clipped_segments = []
+
+    for i in range(len(blade_points) - 1):
+        clipped = liang_barsky_clip(
+            blade_points[i],
+            blade_points[i + 1],
+            (0, 0, WIDTH - 1, HEIGHT - 1)
+        )
+        if clipped:
+            clipped_segments.append(clipped)
+
+    for a, b in clipped_segments:
+        # DDA for the glowing trail.
+        dda_line(surface, a, b, (245, 245, 255), 5)
+        # Bresenham for the sharp core.
+        bresenham_line(surface, a, b, (255, 255, 255), 2)
+
+    if blade_points:
+        midpoint_circle(
+            surface,
+            blade_points[-1][0],
+            blade_points[-1][1],
+            7,
+            (255, 255, 255),
+            2
+        )
+
+
+def draw_game_over(surface):
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 160))
+    surface.blit(overlay, (0, 0))
+
+    title = BIG.render("GAME OVER", True, (255, 100, 110))
+    final = FONT.render(f"Final Score: {score}", True, (245, 245, 245))
+    restart = FONT.render("Press R to play again", True, (190, 200, 215))
+
+    surface.blit(title, (WIDTH // 2 - title.get_width() // 2, 260))
+    surface.blit(final, (WIDTH // 2 - final.get_width() // 2, 325))
+    surface.blit(restart, (WIDTH // 2 - restart.get_width() // 2, 370))
+
+
+# ------------------------------------------------------------
+# Main loop
+# ------------------------------------------------------------
+
+running = True
+mouse_down = False
+
+while running:
+    dt = clock.tick(FPS)
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                running = False
+
+            if event.key == pygame.K_r and game_over:
+                reset_game()
+
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1 and not game_over:
+                mouse_down = True
+                blade_points = [event.pos]
+
+        elif event.type == pygame.MOUSEBUTTONUP:
+            if event.button == 1:
+                mouse_down = False
+
+        elif event.type == pygame.MOUSEMOTION:
+            if mouse_down and not game_over:
+                current = event.pos
+                previous = blade_points[-1] if blade_points else current
+
+                # A single mouse motion segment is the actual cutting line.
+                if math.dist(previous, current) > 1:
+                    blade_points.append(current)
+                    if len(blade_points) > MAX_BLADE_POINTS:
+                        blade_points.pop(0)
+
+                    # Check bombs against THIS exact mouse segment.
+                    for bomb in bombs[:]:
+                        if bomb.hit_by_segment(previous, current):
+                            lives -= 1
+                            add_slice_particles((bomb.x, bomb.y))
+                            bombs.remove(bomb)
+                            if lives <= 0:
+                                game_over = True
+                            break
+
+                    # Check every fruit against THIS exact mouse segment.
+                    for fruit in fruits:
+                        if fruit.try_slice(previous, current):
+                            register_fruit_slice(current)
+
+    if not game_over:
+        spawn_timer -= 1
+        if spawn_timer <= 0:
+            spawn_fruit()
+
+            # Bombs deliberately spawn regularly so they are easy to see.
+            # First bomb appears quickly, then roughly every few waves.
+            if len(bombs) == 0 and random.random() < 0.45:
+                spawn_bomb()
+            elif random.random() < 0.22:
+                spawn_bomb()
+
+            spawn_timer = max(18, random.randint(30, 50) - score // 50)
+
+        for fruit in fruits:
+            fruit.update()
+
+        for bomb in bombs:
+            bomb.update()
+
+        # Lose a life only if an unsliced fruit falls below the screen.
+        for fruit in fruits[:]:
+            if not fruit.alive:
+                if not fruit.sliced and fruit.y > HEIGHT + 70:
+                    lives -= 1
+
+                fruits.remove(fruit)
+
+        # Remove bombs that have fallen off-screen.
+        for bomb in bombs[:]:
+            if not bomb.alive:
+                bombs.remove(bomb)
+
+        if lives <= 0:
+            game_over = True
+
+        if combo_timer > 0:
+            combo_timer -= 1
+            if combo_timer <= 0:
+                combo = 0
+
+        update_particles()
+
+    if blade_points:
+        blade_timer += 1
+        if not mouse_down:
+            blade_points = blade_points[-8:]
+            for _ in range(min(2, len(blade_points))):
+                if blade_points:
+                    blade_points.pop(0)
+
+    # Draw.
+    draw_background(screen)
+
+    for fruit in fruits:
+        fruit.draw(screen)
+
+    for bomb in bombs:
+        bomb.draw(screen)
+
+    draw_particles(screen)
+    draw_blade(screen)
+    draw_hud(screen)
+
+    if game_over:
+        draw_game_over(screen)
+
+    pygame.display.flip()
+
+pygame.quit()
